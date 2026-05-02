@@ -1,0 +1,29 @@
+name: Heartbeat check-in
+
+on:
+  workflow_dispatch:
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update heartbeat
+        run: |
+          echo "$(date -u +%Y-%m-%d)" > heartbeat.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add heartbeat.txt
+          git commit -m "heartbeat: $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Close stale check-in issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue list --label "license-checkin" --state open --json number \
+            --jq '.[].number' | xargs -I{} gh issue close {} \
+            --comment "Check-in received. Clock reset." 2>/dev/null || true

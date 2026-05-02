@@ -1,0 +1,50 @@
+name: Dead man's switch
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"   # 09:00 UTC on the 1st of every month
+  workflow_dispatch:        # allow manual trigger for testing
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check heartbeat age
+        id: age
+        run: |
+          if [ ! -f heartbeat.txt ]; then
+            echo "days=999" >> "$GITHUB_OUTPUT"
+          else
+            last=$(cat heartbeat.txt | tr -d '[:space:]')
+            now=$(date -u +%Y-%m-%d)
+            days=$(( ( $(date -d "$now" +%s) - $(date -d "$last" +%s) ) / 86400 ))
+            echo "days=$days" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Warn if 60–90 days (open issue)
+        if: ${{ fromJson(steps.age.outputs.days) >= 60 && fromJson(steps.age.outputs.days) <= 90 }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list --label "license-checkin" --state open --json number --jq 'length')
+          if [ "$existing" -eq 0 ]; then
+            gh issue create \
+              --title "⚠️ License check-in required" \
+              --body "It has been ${{ steps.age.outputs.days }} days since your last heartbeat check-in. Run the **Heartbeat check-in** workflow within the next 30 days to keep Circuit Vault licenses active." \
+              --label "license-checkin"
+          fi
+
+      - name: Sunset if > 90 days (flip validate to false)
+        if: ${{ fromJson(steps.age.outputs.days) > 90 }}
+        run: |
+          echo '{"validate": false}' > validate.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add validate.json
+          git commit -m "sunset: validate set to false after ${{ steps.age.outputs.days }} days without check-in"
+          git push
